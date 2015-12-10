@@ -61,7 +61,7 @@ all: Boom.elf secondary-outputs
 Boom.elf: $(OBJS) $(USER_OBJS)
 	@echo 'Building target: $@'
 	@echo 'Invoking: AVR C++ Linker'
-	avr-g++ -Wl,-Map,Boom.map,--cref -mrelax -Wl,--gc-sections -mmcu=at90s2313 -o "Boom.elf" $(OBJS) $(USER_OBJS) $(LIBS)
+	avr-g++ -Wl,-Map,Boom.map,--cref -mrelax -Wl,--gc-sections -mmcu=at90usb162 -o "Boom.elf" $(OBJS) $(USER_OBJS) $(LIBS)
 	@echo 'Finished building target: $@'
 	@echo ' '
 
@@ -79,7 +79,7 @@ Boom.hex: Boom.elf
 
 sizedummy: Boom.elf
 	@echo 'Invoking: Print Size'
-	-avr-size --format=avr --mcu=at90s2313 Boom.elf
+	-avr-size --format=avr --mcu=at90usb162 Boom.elf
 	@echo 'Finished building: $@'
 	@echo ' '
 

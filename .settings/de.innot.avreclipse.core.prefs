@@ -1,7 +1,7 @@
-avrtarget/ClockFrequency=8000000
+avrtarget/ClockFrequency=2000000
 avrtarget/ExtRAMSize=0
 avrtarget/ExtendedRAM=false
-avrtarget/MCUType=at90s2313
+avrtarget/MCUType=at90usb162
 avrtarget/UseEEPROM=false
 avrtarget/UseExtendedRAMforHeap=true
 avrtarget/perConfig=false
