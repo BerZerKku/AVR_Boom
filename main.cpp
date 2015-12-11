@@ -43,6 +43,7 @@ typedef enum {
 static const uint8_t u8Wire1 = (1 << PC4);	// первый нужный
 static const uint8_t u8Wire2 = (1 << PC5);	// второй нужный
 static const uint8_t u8Wire3 = (1 << PC6);	// остальные
+static const uint8_t u8CntWire = 250;		// кол-во повторов опроса провода
 
 // выходы
 static const uint8_t u8OutBoom = (1 << PB7);	// выход сработавшей бомбы
@@ -83,10 +84,6 @@ static const uint8_t u8EvenE = (1 << PD7);
 static const uint8_t u8EvenF = (1 << PD2);
 static const uint8_t u8EvenG = (1 << PD1);
 
-//
-void low_level_init() __attribute__((__naked__)) __attribute__((section(".init3")));
-static void printValue();
-
 // массив выбора текущего символа индикатора, начинается с младшего символа
 static const uint8_t u8Digit[] PROGMEM = {
 		u8Digit1,	// десятки минут
@@ -124,6 +121,10 @@ static const uint8_t u8SymEven[] PROGMEM = {
 		u8EvenA | u8EvenB | u8EvenC | u8EvenD | u8EvenF | u8EvenG,		// '9'
 		0b00000000														// ' '
 };
+
+//
+void low_level_init() __attribute__((__naked__)) __attribute__((section(".init3")));
+static void printValue();
 
 // буфер текущего значения для вывода на экран, начинается с младшего символа
 static uint8_t u8Buf[] = {10, 10, 10, 10};
@@ -168,6 +169,8 @@ int main() {
 	STATE state = STATE_WAIT;
 	uint8_t tick1s = 0;	// счетчик 1с
 	uint8_t speed = u8SpeedNo;	// скорость счета за тик таймера
+	uint8_t cntWire = 0;
+	uint8_t prevWire = 0;
 	uint16_t time = u8BoomInit;	// время до взрыва бомбы
 
 	sei();
@@ -193,9 +196,21 @@ int main() {
 			TIFR1 = (1 << OCF1A);
 		}
 
+		uint8_t wire = PINC;
+		if (prevWire == wire) {
+			if (cntWire <= u8CntWire) {
+				cntWire++;
+				wire = 0;
+			}
+		} else {
+			cntWire = 0;
+			prevWire = wire;
+			wire = 0;
+		}
+
 		switch(state) {
 			case STATE_COUNT_NORM: {
-				uint8_t wire = PINC;
+				point = true;
 				speed = u8SpeedNom;
 				if ((wire & u8Wire3) == u8Wire3) {
 					state = STATE_EXPLODED;		// вытащили неверный провод
@@ -207,22 +222,25 @@ int main() {
 			} break;
 
 			case STATE_COUNT_FAST: {
-				uint8_t wire = PINC;
 				speed = u8SpeedMax;
 				if ((wire & u8Wire3) == u8Wire3) {
 					state = STATE_EXPLODED;		// вытащили неверный провод
+				} else if ((wire & u8Wire1) == 0) {
+					state = STATE_EXPLODED;		// провод вставили обратно
 				} else if ((wire & u8Wire2) == u8Wire2) {
 					state = STATE_DEFUSED;		// вытащили верный провод
 				}
 			} break;
 
 			case STATE_DEFUSED: {
+				point = false;
 				speed = u8SpeedNo;
 				PORTC &= ~u8OutDefuse;
 				state = STATE_WAIT;
 			} break;
 
 			case STATE_EXPLODED: {
+				point = false;
 				time = 0;
 				speed = u8SpeedNo;
 				PORTB &= ~u8OutBoom;
@@ -233,7 +251,6 @@ int main() {
 				// запуск работы бомбы
 				if ((PINB & u8InStart) == 0) {
 					tick1s = 0;
-					point = true;
 					time = u8BoomInit;
 					PORTB |= u8OutBoom;
 					PORTC |= u8OutDefuse;
