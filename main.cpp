@@ -12,7 +12,7 @@
 
 /** Алгоритм работы.
  *
- * 	1. ЗАПУСК, обратный отсчет начиная с 60:00.
+ * 	1. ЗАПУСК, обратный отсчет начиная с 60:00. РЕЛЕ1 открыто, РЕЛЕ2 закрыто.
  * 	2. При "обрыве" первого провода время ускоряется в 10 раз.
  * 	3. При "обрыве" второго провода время останавливается -> ОБЕЗВРЕЖЕНО.
  * 	4. При "обрыве" любого неверного провода -> ВЗРЫВ.
@@ -22,11 +22,11 @@
  *
  *	ВЗРЫВ:
  *	- обнуление времени;
- *	- срабатывание РЕЛЕ1, для управления внешними устройствами;
+ *	- закрывается РЕЛЕ1, для управления внешними устройствами;
  *
  *	ОБЕЗВРЕЖЕНО:
  * 	- время останавливается;
- * 	- срабатывание РЕЛЕ2.
+ * 	- открывается РЕЛЕ2.
  */
 
 
@@ -60,10 +60,10 @@ static const uint8_t u8Digit4 = (1 << PB5);	// четвертый индикатор
 static const uint8_t u8Digits = (u8Digit1 | u8Digit2 | u8Digit3 | u8Digit4);
 
 static const uint16_t u8BoomInit = 3600;// начальное значение таймера в секундах
-static const uint8_t u8Tick = 8;		// кол-во тиков таймера 1 для 1 секунды
+static const uint8_t u8Tick = 40;		// кол-во тиков таймера 1 для 1 секунды
 static const uint8_t u8SpeedNo	= 0;	// счет таймера остановлен
 static const uint8_t u8SpeedNom = 1;	// счет таймера нормальный
-static const uint8_t u8SpeedMax = 10;	// счет таймера ускоренный
+static const uint8_t u8SpeedMax = 30;	// счет таймера ускоренный
 
 // разряд для вывода точки (срабатывает для любого индикатора)
 static const uint8_t u8Point = (1 << PD0);
@@ -171,7 +171,7 @@ int main() {
 	uint8_t speed = u8SpeedNo;	// скорость счета за тик таймера
 	uint8_t cntWire = 0;
 	uint8_t prevWire = 0;
-	uint16_t time = u8BoomInit;	// время до взрыва бомбы
+	int16_t time = u8BoomInit;	// время до взрыва бомбы
 
 	sei();
 
@@ -186,12 +186,21 @@ int main() {
 		// медленный цикл для подсчета секунд
 		if (TIFR1 & (1 << OCF1A)) {
 			tick1s += speed;
-			if (tick1s >= u8Tick) {	// прошла секунда
-				if  (time > 0) {
-					time--;
+			if ((tick1s / u8Tick) > 0) {
+				time -= (tick1s / u8Tick);
+				if (time <= 0) {
+					state = STATE_EXPLODED;
+					time = 0;
 				}
-				tick1s = 0;
+				tick1s %=  u8Tick;
 			}
+
+//			if (tick1s >= u8Tick) {	// прошла секунда
+//				if  (time > 0) {
+//					time--;
+//				}
+//				tick1s = 0;
+//			}
 			setTime(time);
 			TIFR1 = (1 << OCF1A);
 		}
@@ -225,8 +234,8 @@ int main() {
 				speed = u8SpeedMax;
 				if ((wire & u8Wire3) == u8Wire3) {
 					state = STATE_EXPLODED;		// вытащили неверный провод
-				} else if ((wire & u8Wire1) == 0) {
-					state = STATE_EXPLODED;		// провод вставили обратно
+//				} else if ((wire & u8Wire1) == 0) {
+//					state = STATE_EXPLODED;		// провод вставили обратно
 				} else if ((wire & u8Wire2) == u8Wire2) {
 					state = STATE_DEFUSED;		// вытащили верный провод
 				}
@@ -243,7 +252,7 @@ int main() {
 				point = false;
 				time = 0;
 				speed = u8SpeedNo;
-				PORTB &= ~u8OutBoom;
+				PORTB |= u8OutBoom;
 				state = STATE_WAIT;
 			} break;
 
@@ -252,7 +261,7 @@ int main() {
 				if ((PINB & u8InStart) == 0) {
 					tick1s = 0;
 					time = u8BoomInit;
-					PORTB |= u8OutBoom;
+					PORTB &= ~u8OutBoom;
 					PORTC |= u8OutDefuse;
 					state = STATE_COUNT_NORM;
 				}
@@ -276,10 +285,10 @@ void low_level_init() {
 
 	// PORTB
 	// Выбор индикатора лог.1
-	// Выход срабатывания бомбы лог.0
+	// Выход срабатывания бомбы лог.1
 	// Вход запуска бомбы лог.0
 	DDRB = u8Digit1 | u8Digit2 | u8Digit3 | u8Digit4 | u8OutBoom;
-	PORTB = u8Digit1 | u8OutBoom | u8InStart;
+	PORTB = u8Digit1 | u8InStart;
 
 	// PORTC
 	// Провода для бомбы, лог.1 при обрыве провода
@@ -299,8 +308,8 @@ void low_level_init() {
 	TCCR0B = (0 << WGM02) | (0 << CS02) | (1 << CS01) | (1 << CS00);
 
 	// TIMER1
-	// CTC, (2Mhz / 8) / 31250 = 0.125s
-	OCR1A = 31250 - 1;
+	// CTC, (2Mhz / 8) / 6250 = 0.025s
+	OCR1A = 6250 - 1;
 	TCCR1A = (0 << WGM11) | (0 << WGM10);
 	TCCR1B = (0 << WGM13) | (1 << WGM12);
 	TCCR1B |= (0 << CS12) | (1 << CS11) | (0 << CS10);
