@@ -50,7 +50,7 @@ typedef enum {
 static const uint8_t u8Wire1 = (1 << PC4);	// первый нужный
 static const uint8_t u8Wire2 = (1 << PC5);	// второй нужный
 static const uint8_t u8Wire3 = (1 << PC6);	// остальные
-static const uint8_t u8CntWire = 250;		// кол-во повторов опроса провода
+static const uint8_t u8CntWire = 10;		// кол-во повторов опроса провода
 
 // выходы
 static const uint8_t u8OutBoom = (1 << PB7);	// выход сработавшей бомбы
@@ -177,6 +177,7 @@ int main() {
 	uint8_t tick1s = 0;	// счетчик 1с
 	uint8_t speed = u8SpeedNo;	// скорость счета за тик таймера
 	uint8_t cntWire = 0;
+	uint8_t cntInStart = 0;
 	uint8_t prevWire = 0;
 	int16_t time = u8BoomInit;	// время до взрыва бомбы
 
@@ -184,9 +185,81 @@ int main() {
 
 	while(1) {
 
-		// быстрый цикл для динамической индикации
+
+
+		// быстрый цикл
 		if (TIFR0 & (1 << OCF0A)) {
 			printValue();
+
+			uint8_t wire = PINC;
+			if (prevWire == wire) {
+				if (cntWire <= u8CntWire) {
+					cntWire++;
+					wire = 0;
+				}
+			} else {
+				cntWire = 0;
+				prevWire = wire;
+				wire = 0;
+			}
+
+			switch(state) {
+				case STATE_COUNT_NORM: {
+					point = true;
+					speed = u8SpeedNom;
+					if ((wire & u8Wire3) == u8Wire3) {
+						state = STATE_EXPLODED;		// вытащили неверный провод
+					} else if ((wire & u8Wire2) == u8Wire2) {
+						state = STATE_EXPLODED;		// вытащили неверный провод
+					} else if ((wire & u8Wire1) == u8Wire1) {
+						state = STATE_COUNT_FAST;	// вытащили верный провод
+					}
+				} break;
+
+				case STATE_COUNT_FAST: {
+					speed = u8SpeedMax;
+					if ((wire & u8Wire3) == u8Wire3) {
+						state = STATE_EXPLODED;		// вытащили неверный провод
+					} else if ((wire & u8Wire2) == u8Wire2) {
+						state = STATE_DEFUSED;		// вытащили верный провод
+					}
+				} break;
+
+				case STATE_DEFUSED: {
+					point = false;
+					speed = u8SpeedNo;
+					PORTC |= u8OutDefuse;
+					state = STATE_WAIT;
+				} break;
+
+				case STATE_EXPLODED: {
+					point = false;
+					time = 0;
+					speed = u8SpeedNo;
+					PORTB &= ~u8OutBoom;
+					PORTC |= u8OutDefuse;
+					state = STATE_WAIT;
+				} break;
+
+				case STATE_WAIT: {
+					// запуск работы бомбы
+					if ((PINB & u8InStart) == 0) {
+						if (cntInStart <= u8CntWire) {
+							cntInStart++;
+						} else {
+							cntInStart = 0;
+							tick1s = 0;
+							time = u8BoomInit;
+							PORTB |= u8OutBoom;
+							PORTC &= ~u8OutDefuse;
+							state = STATE_COUNT_NORM;
+						}
+					} else {
+						cntInStart = 0;
+					}
+				} break;
+			}
+
 			TIFR0 = (1 << OCF0A);
 		}
 
@@ -202,78 +275,8 @@ int main() {
 				tick1s %=  u8Tick;
 			}
 
-//			if (tick1s >= u8Tick) {	// прошла секунда
-//				if  (time > 0) {
-//					time--;
-//				}
-//				tick1s = 0;
-//			}
 			setTime(time);
 			TIFR1 = (1 << OCF1A);
-		}
-
-		uint8_t wire = PINC;
-		if (prevWire == wire) {
-			if (cntWire <= u8CntWire) {
-				cntWire++;
-				wire = 0;
-			}
-		} else {
-			cntWire = 0;
-			prevWire = wire;
-			wire = 0;
-		}
-
-		switch(state) {
-			case STATE_COUNT_NORM: {
-				point = true;
-				speed = u8SpeedNom;
-				if ((wire & u8Wire3) == u8Wire3) {
-					state = STATE_EXPLODED;		// вытащили неверный провод
-				} else if ((wire & u8Wire2) == u8Wire2) {
-					state = STATE_EXPLODED;		// вытащили неверный провод
-				} else if ((wire & u8Wire1) == u8Wire1) {
-					state = STATE_COUNT_FAST;	// вытащили верный провод
-				}
-			} break;
-
-			case STATE_COUNT_FAST: {
-				speed = u8SpeedMax;
-				if ((wire & u8Wire3) == u8Wire3) {
-					state = STATE_EXPLODED;		// вытащили неверный провод
-//				} else if ((wire & u8Wire1) == 0) {
-//					state = STATE_EXPLODED;		// провод вставили обратно
-				} else if ((wire & u8Wire2) == u8Wire2) {
-					state = STATE_DEFUSED;		// вытащили верный провод
-				}
-			} break;
-
-			case STATE_DEFUSED: {
-				point = false;
-				speed = u8SpeedNo;
-				PORTC |= u8OutDefuse;
-				state = STATE_WAIT;
-			} break;
-
-			case STATE_EXPLODED: {
-				point = false;
-				time = 0;
-				speed = u8SpeedNo;
-				PORTB &= ~u8OutBoom;
-				PORTC |= u8OutDefuse;
-				state = STATE_WAIT;
-			} break;
-
-			case STATE_WAIT: {
-				// запуск работы бомбы
-				if ((PINB & u8InStart) == 0) {
-					tick1s = 0;
-					time = u8BoomInit;
-					PORTB |= u8OutBoom;
-					PORTC &= ~u8OutDefuse;
-					state = STATE_COUNT_NORM;
-				}
-			} break;
 		}
 	}
 }
