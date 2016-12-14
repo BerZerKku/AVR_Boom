@@ -55,6 +55,7 @@ static const uint8_t u8CntWire = 10;		// кол-во повторов опроса провода
 // выходы
 static const uint8_t u8OutBoom = (1 << PB7);	// выход сработавшей бомбы
 static const uint8_t u8OutDefuse = (1 << PC7);	// выход разряженной бомбы
+static const uint8_t u8OutButton = (1 << PB1);	// выход 0 или 3-е состояние
 
 // входы
 static const uint8_t u8InStart = (1 << PB6);	// вход запуска бомбы
@@ -132,6 +133,8 @@ static const uint8_t u8SymEven[] PROGMEM = {
 //
 void low_level_init() __attribute__((__naked__)) __attribute__((section(".init3")));
 static void printValue();
+static void setTime(uint16_t val);
+static void pressButtonWav(uint8_t num);
 
 // буфер текущего значения для вывода на экран, начинается с младшего символа
 static uint8_t u8Buf[] = {10, 10, 10, 10};
@@ -139,7 +142,7 @@ static uint8_t u8Buf[] = {10, 10, 10, 10};
 static bool point = false;
 
 // перекодировка текущего значения во время
-void setTime(uint16_t val) {
+static void setTime(uint16_t val) {
 	uint8_t tmp = val % 60;
 	u8Buf[3] = tmp % 10;
 	u8Buf[2] = tmp / 10;
@@ -147,6 +150,30 @@ void setTime(uint16_t val) {
 	tmp = val / 60;
 	u8Buf[1] = tmp % 10;
 	u8Buf[0] = tmp / 10;
+}
+
+// нажатие кнопки на WAV-проигрывателе num-раз
+// если 0 - то рабочий цикл
+// если не 0, то кол-во необходимых нажатий
+// вызывать раз в 25мс
+static void pressButtonWav(uint8_t num) {
+	static uint8_t cnt = 0;
+	static uint8_t delayOn = 0;
+	static uint8_t delayOff = 0;
+
+	if (num != 0) {
+		cnt = num;
+	} else if (delayOn > 0) {
+		DDRB |= u8OutButton;
+		delayOn--;
+	} else if (delayOff > 0) {
+		DDRB &= ~u8OutButton;
+		delayOff--;
+	} else if (cnt > 0) {
+		cnt--;
+		delayOn = 3;
+		delayOff = 6;
+	}
 }
 
 // вывод значения на индикаторы
@@ -228,7 +255,13 @@ int main() {
 				case STATE_DEFUSED: {
 					point = false;
 					speed = u8SpeedNo;
-					PORTC |= u8OutDefuse;
+
+					pressButtonWav(1);
+
+//					DDRB |= u8OutButton;
+//					_delay_ms(20);
+//					DDRB &= ~u8OutButton;
+//					_delay_ms(50);
 					state = STATE_WAIT;
 				} break;
 
@@ -236,8 +269,17 @@ int main() {
 					point = false;
 					time = 0;
 					speed = u8SpeedNo;
-					PORTB &= ~u8OutBoom;
 					PORTC |= u8OutDefuse;
+
+					pressButtonWav(2);
+
+//					DDRB |= u8OutButton;
+//					_delay_ms(40);
+//					DDRB &= ~u8OutButton;
+//					_delay_ms(60);
+//					DDRB |= u8OutButton;
+//					_delay_ms(40);
+//					DDRB &= ~u8OutButton;
 					state = STATE_WAIT;
 				} break;
 
@@ -250,8 +292,12 @@ int main() {
 							cntInStart = 0;
 							tick1s = 0;
 							time = u8BoomInit;
-							PORTB |= u8OutBoom;
 							PORTC &= ~u8OutDefuse;
+
+							PORTB |= u8OutBoom;
+							_delay_ms(200);
+							PORTB &= ~u8OutBoom;
+
 							state = STATE_COUNT_NORM;
 						}
 					} else {
@@ -269,11 +315,14 @@ int main() {
 			if ((tick1s / u8Tick) > 0) {
 				time -= (tick1s / u8Tick);
 				if (time <= 0) {
-					state = STATE_EXPLODED;
+					if (state != STATE_WAIT)
+						state = STATE_EXPLODED;
 					time = 0;
 				}
 				tick1s %=  u8Tick;
 			}
+
+			pressButtonWav(0);
 
 			setTime(time);
 			TIFR1 = (1 << OCF1A);
@@ -290,7 +339,7 @@ int main() {
  * 	при этом затрется и бутлоадер. Поэтому работаем на этих 2МГц.
  *
  * 	Таймер 0 срабатывает каждые 3.2 мс.
- * 	Таймер 1 срабатывает каждые 125 мс.
+ * 	Таймер 1 срабатывает каждые 25 мс.
  */
 void low_level_init() {
 
@@ -298,6 +347,7 @@ void low_level_init() {
 	// Выбор индикатора лог.1
 	// Выход срабатывания бомбы лог.1
 	// Вход запуска бомбы лог.0
+	// Выход на кнопку лог.0 или в 3-ем состоянии
 	DDRB = u8Digit1 | u8Digit2 | u8Digit3 | u8Digit4 | u8OutBoom;
 	PORTB = u8Digit1 | u8InStart | u8OutBoom;
 
