@@ -18,28 +18,32 @@
  *	РЕЛЕ2 - используется для подачи звукового сигнала, когда открыто.
  *	
  *	1. При включении устройства РЕЛЕ1 закрыто, РЕЛЕ2 закрыто.
- * 	2. ЗАПУСК, обратный отсчет начиная с 60:00. РЕЛЕ1 открыто, РЕЛЕ2 закрыто.
+ * 	2. ЗАПУСК, обратный отсчет начиная с 60:00.
  * 	3. При "обрыве" первого провода время ускоряется в 10 раз.
  * 	4. При "обрыве" второго провода время останавливается -> ОБЕЗВРЕЖЕНО.
- * 	5. При "обрыве" любого неверного провода -> ВЗРЫВ.
+ * 	5. При "обрыве" любого неверного провода или окончании времени -> ВЗРЫВ.
  *
  * 	ЗАПУСК:
+ * 	- РЕЛЕ2 кратковременно закрывается, РЕЛЕ1 открыто (для закрытия замка);
  *	- срабатывание при воздействии на вход ПУСК;
+ *	- на проигрывателе запускается звук 1.wav.
  *
  *	ВЗРЫВ:
  *	- обнуление времени;
  *	- закрывается РЕЛЕ1, для открытия замка;
- *	- открывается РЕЛЕ2, для подачи звука взрыва.
+ *	- подается двойной сигнал на кнопку проигрывателя (3.wav)
  *
  *	ОБЕЗВРЕЖЕНО:
  * 	- время останавливается;
- * 	- закрывается РЕЛЕ1, для открытия замка.
+ * 	- закрывается РЕЛЕ1, для открытия замка;
+ * 	- подается одинарный сигнал на кнопку проигрывателя (2.wav).
  */
 
 
 // текущее состояние работы бомбы
 typedef enum {
 	STATE_WAIT,			// ожидание начала
+	STATE_RESET_WAV,	// ожидание сброса плейра WAV
 	STATE_COUNT_NORM,	// бомба запущена в нормальном режиме
 	STATE_COUNT_FAST,	// бомба запущена в ускоренном режиме
 	STATE_EXPLODED,		// бомба взорвалась
@@ -50,10 +54,10 @@ typedef enum {
 static const uint8_t u8Wire1 = (1 << PC4);	// первый нужный
 static const uint8_t u8Wire2 = (1 << PC5);	// второй нужный
 static const uint8_t u8Wire3 = (1 << PC6);	// остальные
-static const uint8_t u8CntWire = 10;		// кол-во повторов опроса провода
+static const uint8_t u8CntWire = 20;		// кол-во повторов опроса провода
 
 // выходы
-static const uint8_t u8OutBoom = (1 << PB7);	// выход сработавшей бомбы
+static const uint8_t u8PowerWav = (1 << PB7);	// выход сработавшей бомбы
 static const uint8_t u8OutDefuse = (1 << PC7);	// выход разряженной бомбы
 static const uint8_t u8OutButton = (1 << PB1);	// выход 0 или 3-е состояние
 
@@ -170,9 +174,9 @@ static void pressButtonWav(uint8_t num) {
 		DDRB &= ~u8OutButton;
 		delayOff--;
 	} else if (cnt > 0) {
-		cnt--;
 		delayOn = 3;
-		delayOff = 6;
+		delayOff = 2;
+		cnt--;
 	}
 }
 
@@ -207,6 +211,7 @@ int main() {
 	uint8_t cntInStart = 0;
 	uint8_t prevWire = 0;
 	int16_t time = u8BoomInit;	// время до взрыва бомбы
+	uint8_t delay = 0;	// пауза на любые действия, шаг = 25мс
 
 	sei();
 
@@ -230,80 +235,85 @@ int main() {
 				wire = 0;
 			}
 
-			switch(state) {
-				case STATE_COUNT_NORM: {
-					point = true;
-					speed = u8SpeedNom;
-					if ((wire & u8Wire3) == u8Wire3) {
-						state = STATE_EXPLODED;		// вытащили неверный провод
-					} else if ((wire & u8Wire2) == u8Wire2) {
-						state = STATE_EXPLODED;		// вытащили неверный провод
-					} else if ((wire & u8Wire1) == u8Wire1) {
-						state = STATE_COUNT_FAST;	// вытащили верный провод
-					}
-				} break;
+			if (delay == 0) {
+				switch(state) {
+					case STATE_COUNT_NORM: {
+						point = true;
+						speed = u8SpeedNom;
+						if ((wire & u8Wire3) == u8Wire3) {
+							state = STATE_EXPLODED;		// вытащили неверный провод
+						} else if ((wire & u8Wire2) == u8Wire2) {
+							state = STATE_EXPLODED;		// вытащили неверный провод
+						} else if ((wire & u8Wire1) == u8Wire1) {
+							state = STATE_COUNT_FAST;	// вытащили верный провод
+						}
+					} break;
 
-				case STATE_COUNT_FAST: {
-					speed = u8SpeedMax;
-					if ((wire & u8Wire3) == u8Wire3) {
-						state = STATE_EXPLODED;		// вытащили неверный провод
-					} else if ((wire & u8Wire2) == u8Wire2) {
-						state = STATE_DEFUSED;		// вытащили верный провод
-					}
-				} break;
+					case STATE_COUNT_FAST: {
+						speed = u8SpeedMax;
+						if ((wire & u8Wire3) == u8Wire3) {
+							state = STATE_EXPLODED;		// вытащили неверный провод
+						} else if ((wire & u8Wire2) == u8Wire2) {
+							state = STATE_DEFUSED;		// вытащили верный провод
+						}
+					} break;
 
-				case STATE_DEFUSED: {
-					point = false;
-					speed = u8SpeedNo;
+					case STATE_DEFUSED: {
+						point = false;
+						speed = u8SpeedNo;
+						PORTC |= u8OutDefuse;
 
-					pressButtonWav(1);
+						pressButtonWav(1);
 
-//					DDRB |= u8OutButton;
-//					_delay_ms(20);
-//					DDRB &= ~u8OutButton;
-//					_delay_ms(50);
-					state = STATE_WAIT;
-				} break;
+						state = STATE_WAIT;
+					} break;
 
-				case STATE_EXPLODED: {
-					point = false;
-					time = 0;
-					speed = u8SpeedNo;
-					PORTC |= u8OutDefuse;
+					case STATE_EXPLODED: {
+						point = false;
+						time = 0;
+						speed = u8SpeedNo;
+						PORTC |= u8OutDefuse;
 
-					pressButtonWav(2);
+						pressButtonWav(2);
 
-//					DDRB |= u8OutButton;
-//					_delay_ms(40);
-//					DDRB &= ~u8OutButton;
-//					_delay_ms(60);
-//					DDRB |= u8OutButton;
-//					_delay_ms(40);
-//					DDRB &= ~u8OutButton;
-					state = STATE_WAIT;
-				} break;
+						state = STATE_WAIT;
+					} break;
 
-				case STATE_WAIT: {
-					// запуск работы бомбы
-					if ((PINB & u8InStart) == 0) {
-						if (cntInStart <= u8CntWire) {
-							cntInStart++;
+					case STATE_RESET_WAV:
+						PORTB &= ~u8PowerWav;
+						delay = 80;
+						speed = u8SpeedNom;
+						state = STATE_COUNT_NORM;
+						break;
+
+					case STATE_WAIT: {
+						// запуск работы бомбы
+						if ((PINB & u8InStart) == 0) {
+							if (cntInStart <= u8CntWire) {
+								cntInStart++;
+							} else {
+								// запуск происходит только если все провода на месте
+								if ((wire & (u8Wire1 | u8Wire2 | u8Wire3)) == 0) {
+									// выключение проигрывателя на 200мс
+									// а затем пауза после включения 2с (25мс х 80) на любые действия
+									// т.к. проигрыватель в это время не реагирует на нажатия
+									PORTB |= u8PowerWav;
+									delay = 10;
+
+									PORTC &= ~u8OutDefuse;
+
+									cntInStart = 0;
+									tick1s = 0;
+									time = u8BoomInit;
+
+									state = STATE_RESET_WAV;
+								}
+							}
 						} else {
 							cntInStart = 0;
-							tick1s = 0;
-							time = u8BoomInit;
-							PORTC &= ~u8OutDefuse;
-
-							PORTB |= u8OutBoom;
-							_delay_ms(200);
-							PORTB &= ~u8OutBoom;
-
-							state = STATE_COUNT_NORM;
 						}
-					} else {
-						cntInStart = 0;
-					}
-				} break;
+					} break;
+				}
 			}
 
 			TIFR0 = (1 << OCF0A);
@@ -321,7 +331,9 @@ int main() {
 				}
 				tick1s %=  u8Tick;
 			}
-
+			if (delay > 0) {
+				delay--;
+			}
 			pressButtonWav(0);
 
 			setTime(time);
@@ -345,11 +357,11 @@ void low_level_init() {
 
 	// PORTB
 	// Выбор индикатора лог.1
-	// Выход срабатывания бомбы лог.1
+	// Выход включения питания WAV_плейра лог.0
 	// Вход запуска бомбы лог.0
 	// Выход на кнопку лог.0 или в 3-ем состоянии
-	DDRB = u8Digit1 | u8Digit2 | u8Digit3 | u8Digit4 | u8OutBoom;
-	PORTB = u8Digit1 | u8InStart | u8OutBoom;
+	DDRB = u8Digit1 | u8Digit2 | u8Digit3 | u8Digit4 | u8PowerWav;
+	PORTB = u8Digit1 | u8InStart | u8PowerWav;
 
 	// PORTC
 	// Провода для бомбы, лог.1 при обрыве провода
