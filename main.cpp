@@ -19,7 +19,7 @@
  *	
  *	1. При включении устройства РЕЛЕ1 закрыто, РЕЛЕ2 закрыто.
  * 	2. ЗАПУСК, обратный отсчет начиная с 60:00.
- * 	3. При "обрыве" первого провода > ОБЕЗВРЕЖЕНО.
+ * 	3. При "обрыве" первого провода (удержание не менее 2 сек) > ОБЕЗВРЕЖЕНО.
  * 	4. При "обрыве" любого неверного провода или окончании времени -> ВЗРЫВ.
  *
  * 	ЗАПУСК:
@@ -46,6 +46,8 @@ typedef enum {
 	STATE_COUNT_NORM,	// бомба запущена в нормальном режиме
 	STATE_COUNT_FAST,	// бомба запущена в ускоренном режиме
 	STATE_EXPLODED,		// бомба взорвалась
+	STATE_DEFUSE_START,	// бомба начало обезвреживания бомбы
+	STATE_DEFUSE_CHECK,	// проверка обезвреживания бомбы
 	STATE_DEFUSED		// бомба разряжена
 } STATE;
 
@@ -70,11 +72,12 @@ static const uint8_t u8Digit3 = (1 << PB4);	// третий индикатор
 static const uint8_t u8Digit4 = (1 << PB5);	// четвертый индикатор
 static const uint8_t u8Digits = (u8Digit1 | u8Digit2 | u8Digit3 | u8Digit4);
 
-static const uint16_t u8BoomInit = 3600;// начальное значение таймера в секундах
-static const uint8_t u8Tick = 40;		// кол-во тиков таймера 1 для 1 секунды
-static const uint8_t u8SpeedNo	= 0;	// счет таймера остановлен
-static const uint8_t u8SpeedNom = 1;	// счет таймера нормальный
-static const uint8_t u8SpeedMax = 30;	// счет таймера ускоренный
+static const uint16_t u16BoomInit = 3600;	// количество секунд до взрыва бомбы
+static const uint16_t u16CheckInit = 2;		// количество секунд для проверки ОБЕЗВРЕЖЕНО
+static const uint8_t u8Tick = 40;			// кол-во тиков таймера 1 для 1 секунды
+static const uint8_t u8SpeedNo	= 0;		// счет таймера остановлен
+static const uint8_t u8SpeedNom = 1;		// счет таймера нормальный
+static const uint8_t u8SpeedMax = 30;		// счет таймера ускоренный
 
 // разряд для вывода точки (срабатывает для любого индикатора)
 static const uint8_t u8Point = (1 << PD0);
@@ -204,20 +207,20 @@ void printValue() {
 
 int main() {
 	STATE state = STATE_WAIT;
-	uint8_t tick1s = 0;	// счетчик 1с
+	STATE tstate = state;
+	uint8_t tick1s = 0;			// счетчик 1с
 	uint8_t speed = u8SpeedNo;	// скорость счета за тик таймера
 	uint8_t cntWire = 0;
 	uint8_t cntInStart = 0;
 	uint8_t prevWire = 0;
-	int16_t time = u8BoomInit;	// время до взрыва бомбы
-	uint8_t delay = 0;	// пауза на любые действия, шаг = 25мс
+	int16_t time = u16BoomInit;	// время до взрыва бомбы
+	int16_t ticksCheck = 0;		// количество тиков на проверку ОБЕЗВРЕЖЕНО
+	uint8_t delay = 0;			// пауза на любые действия, шаг = 25мс
+
 
 	sei();
 
 	while(1) {
-
-
-
 		// быстрый цикл
 		if (TIFR0 & (1 << OCF0A)) {
 			printValue();
@@ -244,7 +247,8 @@ int main() {
 						} else if ((wire & u8Wire2) == u8Wire2) {
 							state = STATE_EXPLODED;		// вытащили неверный провод
 						} else if ((wire & u8Wire1) == u8Wire1) {
-							state = STATE_DEFUSED;	// вытащили верный провод
+							tstate = state;
+							state = STATE_DEFUSE_START;	// вытащили верный провод
 						}
 					} break;
 
@@ -253,7 +257,25 @@ int main() {
 						if ((wire & u8Wire3) == u8Wire3) {
 							state = STATE_EXPLODED;		// вытащили неверный провод
 						} else if ((wire & u8Wire2) == u8Wire2) {
-							state = STATE_DEFUSED;		// вытащили верный провод
+							tstate = state;
+							state = STATE_DEFUSE_START;		// вытащили верный провод
+						}
+					} break;
+
+					case STATE_DEFUSE_START: {
+						ticksCheck = u8Tick * u16CheckInit;
+						state = STATE_DEFUSE_CHECK;
+					} break;
+
+					case STATE_DEFUSE_CHECK: {
+						if ((wire & u8Wire3) == u8Wire3) {
+							state = STATE_EXPLODED;		// вытащили неверный провод
+						} else if ((wire & u8Wire2) == u8Wire2) {
+							state = STATE_EXPLODED;		// вытащили неверный провод
+						} else if ((wire & u8Wire1) != u8Wire1) {
+							state = tstate;				// вставили верный провод
+						} else if (ticksCheck <= 0) {
+							state = STATE_DEFUSED;		// закончилось время проверки
 						}
 					} break;
 
@@ -303,7 +325,7 @@ int main() {
 
 									cntInStart = 0;
 									tick1s = 0;
-									time = u8BoomInit;
+									time = u16BoomInit;
 
 									state = STATE_RESET_WAV;
 								}
@@ -330,6 +352,11 @@ int main() {
 				}
 				tick1s %=  u8Tick;
 			}
+
+			if (ticksCheck > 0) {
+				ticksCheck--;
+			}
+
 			if (delay > 0) {
 				delay--;
 			}
